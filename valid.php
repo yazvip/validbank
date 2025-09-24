@@ -1,4 +1,4 @@
-perbaiki dan test hingga kode benar. <?php
+<?php
 // ================== KONFIGURASI ==================
 // Ganti dengan kredensial Anda dari BRIAPI
 $client_id     = "bzoZFq23SknHOWovbTMxPgZwAkGIxuCU"; // ganti key baru
