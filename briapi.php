@@ -16,13 +16,20 @@ function briapi_create_signature(string $resourcePath, string $httpVerb, string 
  */
 function briapi_http_request(string $url, string $method, array $headers = [], string $body = ''): array {
     $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
-    if (!empty($body)) {
+    $upperMethod = strtoupper($method);
+    if ($upperMethod === 'POST') {
+        curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+    } else {
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+        if (!empty($body)) {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+        }
     }
     if (!empty($headers)) {
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     }
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     $response = curl_exec($ch);
     $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -46,12 +53,13 @@ function briapi_get_access_token(array $config): string {
         throw new RuntimeException('BRIAPI client credentials are not set. Please set BRIAPI_CLIENT_ID and BRIAPI_CLIENT_SECRET.');
     }
 
-    $tokenUrl = $baseUrl . '/oauth/client_credential/accesstoken';
+    $tokenUrl = $baseUrl . '/oauth/client_credential/accesstoken?grant_type=client_credentials';
     $headers = [
         'Content-Type: application/x-www-form-urlencoded',
+        'Accept: application/json',
         'Authorization: Basic ' . base64_encode($clientId . ':' . $clientSecret),
     ];
-    $res = briapi_http_request($tokenUrl, 'POST', $headers, 'grant_type=client_credentials');
+    $res = briapi_http_request($tokenUrl, 'POST', $headers, '');
     if ($res['http_code'] !== 200) {
         throw new RuntimeException('Failed to obtain access token. HTTP ' . $res['http_code'] . ': ' . $res['body']);
     }
