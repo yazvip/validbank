@@ -1,126 +1,40 @@
 <?php
-// ================== KONFIGURASI ==================
-// Ganti dengan kredensial Anda dari BRIAPI
-$client_id     = "bzoZFq23SknHOWovbTMxPgZwAkGIxuCU"; // ganti key baru
-$client_secret = "xUyEaHFse52GewTP";               // ganti secret baru
-$base_url      = "https://sandbox.partner.api.bri.co.id";
+require_once __DIR__ . '/briapi.php';
 
-// ================== AMBIL TOKEN OTOMATIS ==================
-function getAccessToken($url, $clientId, $clientSecret) {
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, array(
-        "Content-Type: application/x-www-form-urlencoded",
-        "Authorization: Basic " . base64_encode($clientId . ":" . $clientSecret)
-    ));
-    // INI PERBAIKANNYA: Menggunakan metode POST yang lebih eksplisit
-    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
-    curl_setopt($ch, CURLOPT_POSTFIELDS, "grant_type=client_credentials");
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    $response = curl_exec($ch);
-    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($http_code != 200) {
-        die("<b>Gagal ambil access token (HTTP Code: {$http_code}):</b><pre>" . htmlspecialchars($response) . "</pre>");
-    }
-
-    $data = json_decode($response, true);
-    if (!isset($data['access_token'])) {
-        die("<b>Access token tidak ditemukan dalam response:</b><pre>" . htmlspecialchars($response) . "</pre>");
-    }
-    return $data['access_token'];
-}
-
-// Menghapus grant_type dari URL
-$token_url = $base_url . "/oauth/client_credential/accesstoken";
-$access_token = getAccessToken($token_url, $client_id, $client_secret);
-
-// ================== FUNGSI UNTUK MEMBUAT SIGNATURE ==================
-function createSignature($resourcePath, $verb, $token, $timestamp, $body, $clientSecret) {
-    $stringToSign = "path={$resourcePath}&verb={$verb}&token={$token}&timestamp={$timestamp}&body={$body}";
-    return base64_encode(hash_hmac('sha256', $stringToSign, $clientSecret, true));
-}
-
+// Load config
+global $CONFIG;
 
 // ================== AMBIL LIST BANK ==================
 $banks = [];
 try {
-    // Menggunakan endpoint v1 untuk mengambil daftar bank
-    $resourcePathListBank = "/v1/transfer/external/accounts";
-    $timestampListBank = gmdate("Y-m-d\TH:i:s.000\Z");
-    $bodyListBank = "";
-
-    // INI PERBAIKANNYA: "Bearer" dihapus dari stringToSign
-    $signatureListBank = createSignature($resourcePathListBank, "GET", $access_token, $timestampListBank, $bodyListBank, $client_secret);
-
-    $urlListBank = $base_url . $resourcePathListBank;
-
-    $ch = curl_init($urlListBank);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, array(
-        "Authorization: Bearer $access_token",
-        "BRI-Timestamp: $timestampListBank",
-        "BRI-Signature: $signatureListBank"
-    ));
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    $responseList = curl_exec($ch);
-    $http_code_list = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($http_code_list == 200) {
-        $listBankData = json_decode($responseList, true);
-        if (isset($listBankData['data'])) {
-            $banks = $listBankData['data'];
-        }
-    } else {
-        // Menampilkan pesan error jika gagal mengambil daftar bank
-        error_log("Gagal ambil daftar bank. HTTP Code: {$http_code_list}. Response: {$responseList}");
-    }
-
-} catch (Exception $e) {
-    error_log("Exception saat ambil list bank: " . $e->getMessage());
+    $banks = briapi_list_banks($CONFIG);
+} catch (Throwable $e) {
+    error_log('Exception saat ambil list bank: ' . $e->getMessage());
 }
-
 
 // ================== VALIDASI REKENING ==================
 $result_json = "";
 $validation_error = "";
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['bankcode']) && !empty($_POST['accountnumber'])) {
-    $bankcode = trim($_POST['bankcode']);
-    $account  = trim($_POST['accountnumber']);
+    $bankcode = trim((string) $_POST['bankcode']);
+    $account  = trim((string) $_POST['accountnumber']);
 
-    $timestampValidate = gmdate("Y-m-d\TH:i:s.000\Z");
-
-    // Endpoint v2 untuk validasi rekening sudah benar
-    $resourcePathValidate = "/v2/transfer/external/accounts?bankcode={$bankcode}&beneficiaryaccount={$account}";
-    $bodyValidate = "";
-
-    // INI PERBAIKANNYA: "Bearer" dihapus dari stringToSign
-    $signatureValidate = createSignature($resourcePathValidate, "GET", $access_token, $timestampValidate, $bodyValidate, $client_secret);
-
-    $urlValidate = $base_url . $resourcePathValidate;
-
-    $ch = curl_init($urlValidate);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, array(
-        "Authorization: Bearer $access_token",
-        "BRI-Timestamp: $timestampValidate",
-        "BRI-Signature: $signatureValidate"
-    ));
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    $response = curl_exec($ch);
-    $http_code_validate = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($http_code_validate != 200) {
-        $validation_error = "Error: Terjadi masalah saat validasi rekening (HTTP Code: {$http_code_validate}).";
+    try {
+        $res = briapi_validate_account($CONFIG, $bankcode, $account);
+        if ($res['http_code'] !== 200) {
+            $validation_error = "Error: Terjadi masalah saat validasi rekening (HTTP Code: {$res['http_code']}).";
+        }
+        $result_json = $res['body'];
+    } catch (Throwable $e) {
+        $validation_error = 'Error: ' . $e->getMessage();
     }
-    $result_json = $response;
 }
 ?>
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale-1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cek Rekening Bank Lain</title>
     <style>
         body { font-family: sans-serif; line-height: 1.6; margin: 2em; background-color: #f4f4f4; }
